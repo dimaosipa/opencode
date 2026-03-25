@@ -1,10 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
+import { type ChildProcess } from "child_process"
 import path from "path"
 import os from "os"
 import { Global } from "../global"
 import { Log } from "../util/log"
 import { BunProc } from "../bun"
-import { $ } from "bun"
 import { text } from "node:stream/consumers"
 import fs from "fs/promises"
 import { Filesystem } from "../util/filesystem"
@@ -13,6 +12,8 @@ import { Flag } from "../flag/flag"
 import { Archive } from "../util/archive"
 import { Process } from "../util/process"
 import { which } from "../util/which"
+import { Module } from "@opencode-ai/util/module"
+import { spawn } from "./launch"
 
 export namespace LSPServer {
   const log = Log.create({ service: "lsp.server" })
@@ -21,9 +22,11 @@ export namespace LSPServer {
       .stat(p)
       .then(() => true)
       .catch(() => false)
+  const run = (cmd: string[], opts: Process.RunOptions = {}) => Process.run(cmd, { ...opts, nothrow: true })
+  const output = (cmd: string[], opts: Process.RunOptions = {}) => Process.text(cmd, { ...opts, nothrow: true })
 
   export interface Handle {
-    process: ChildProcessWithoutNullStreams
+    process: ChildProcess
     initialization?: Record<string, any>
   }
 
@@ -84,6 +87,7 @@ export namespace LSPServer {
       return {
         process: spawn(deno, ["lsp"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -97,7 +101,7 @@ export namespace LSPServer {
     ),
     extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
     async spawn(root) {
-      const tsserver = await Bun.resolve("typescript/lib/tsserver.js", Instance.directory).catch(() => {})
+      const tsserver = Module.resolve("typescript/lib/tsserver.js", Instance.directory)
       log.info("typescript server", { tsserver })
       if (!tsserver) return
       const proc = spawn(BunProc.which(), ["x", "typescript-language-server", "--stdio"], {
@@ -106,6 +110,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -157,6 +162,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -172,7 +178,7 @@ export namespace LSPServer {
     root: NearestRoot(["package-lock.json", "bun.lockb", "bun.lock", "pnpm-lock.yaml", "yarn.lock"]),
     extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"],
     async spawn(root) {
-      const eslint = await Bun.resolve("eslint", Instance.directory).catch(() => {})
+      const eslint = Module.resolve("eslint", Instance.directory)
       if (!eslint) return
       log.info("spawning eslint server")
       const serverPath = path.join(Global.Path.bin, "vscode-eslint", "server", "out", "eslintServer.js")
@@ -205,8 +211,8 @@ export namespace LSPServer {
         await fs.rename(extractedPath, finalPath)
 
         const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
-        await $`${npmCmd} install`.cwd(finalPath).quiet()
-        await $`${npmCmd} run compile`.cwd(finalPath).quiet()
+        await Process.run([npmCmd, "install"], { cwd: finalPath })
+        await Process.run([npmCmd, "run", "compile"], { cwd: finalPath })
 
         log.info("installed VS Code ESLint server", { serverPath })
       }
@@ -217,6 +223,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
 
       return {
@@ -266,7 +273,7 @@ export namespace LSPServer {
       }
 
       if (lintBin) {
-        const proc = Process.spawn([lintBin, "--help"], { stdout: "pipe" })
+        const proc = spawn(lintBin, ["--help"])
         await proc.exited
         if (proc.stdout) {
           const help = await text(proc.stdout)
@@ -274,6 +281,7 @@ export namespace LSPServer {
             return {
               process: spawn(lintBin, ["--lsp"], {
                 cwd: root,
+                stdio: ["pipe", "pipe", "ignore"],
               }),
             }
           }
@@ -289,6 +297,7 @@ export namespace LSPServer {
         return {
           process: spawn(serverBin, [], {
             cwd: root,
+            stdio: ["pipe", "pipe", "ignore"],
           }),
         }
       }
@@ -340,7 +349,7 @@ export namespace LSPServer {
       let args = ["lsp-proxy", "--stdio"]
 
       if (!bin) {
-        const resolved = await Bun.resolve("biome", root).catch(() => undefined)
+        const resolved = Module.resolve("biome", root)
         if (!resolved) return
         bin = BunProc.which()
         args = ["x", "biome", "lsp-proxy", "--stdio"]
@@ -352,6 +361,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
 
       return {
@@ -396,6 +406,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin!, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -436,6 +447,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin!, ["--lsp"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -496,6 +508,7 @@ export namespace LSPServer {
 
       const proc = spawn(binary, ["server"], {
         cwd: root,
+        stdio: ["pipe", "pipe", "ignore"],
       })
 
       return {
@@ -551,6 +564,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -602,10 +616,11 @@ export namespace LSPServer {
             recursive: true,
           })
 
-          await $`mix deps.get && mix compile && mix elixir_ls.release2 -o release`
-            .quiet()
-            .cwd(path.join(Global.Path.bin, "elixir-ls-master"))
-            .env({ MIX_ENV: "prod", ...process.env })
+          const cwd = path.join(Global.Path.bin, "elixir-ls-master")
+          const env = { MIX_ENV: "prod", ...process.env }
+          await Process.run(["mix", "deps.get"], { cwd, env })
+          await Process.run(["mix", "compile"], { cwd, env })
+          await Process.run(["mix", "elixir_ls.release2", "-o", "release"], { cwd, env })
 
           log.info(`installed elixir-ls`, {
             path: elixirLsPath,
@@ -616,6 +631,7 @@ export namespace LSPServer {
       return {
         process: spawn(binary, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -706,7 +722,7 @@ export namespace LSPServer {
             })
           if (!ok) return
         } else {
-          await $`tar -xf ${tempPath}`.cwd(Global.Path.bin).quiet().nothrow()
+          await run(["tar", "-xf", tempPath], { cwd: Global.Path.bin })
         }
 
         await fs.rm(tempPath, { force: true })
@@ -719,7 +735,7 @@ export namespace LSPServer {
         }
 
         if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
+          await fs.chmod(bin, 0o755).catch(() => {})
         }
 
         log.info(`installed zls`, { bin })
@@ -728,6 +744,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -767,6 +784,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -806,6 +824,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -823,6 +842,7 @@ export namespace LSPServer {
         return {
           process: spawn(sourcekit, {
             cwd: root,
+            stdio: ["pipe", "pipe", "ignore"],
           }),
         }
       }
@@ -831,15 +851,16 @@ export namespace LSPServer {
       // This is specific to macOS where sourcekit-lsp is typically installed with Xcode
       if (!which("xcrun")) return
 
-      const lspLoc = await $`xcrun --find sourcekit-lsp`.quiet().nothrow()
+      const lspLoc = await output(["xcrun", "--find", "sourcekit-lsp"])
 
-      if (lspLoc.exitCode !== 0) return
+      if (lspLoc.code !== 0) return
 
-      const bin = lspLoc.text().trim()
+      const bin = lspLoc.text.trim()
 
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -886,6 +907,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -902,6 +924,7 @@ export namespace LSPServer {
         return {
           process: spawn(fromPath, args, {
             cwd: root,
+            stdio: ["pipe", "pipe", "ignore"],
           }),
         }
       }
@@ -912,6 +935,7 @@ export namespace LSPServer {
         return {
           process: spawn(direct, args, {
             cwd: root,
+            stdio: ["pipe", "pipe", "ignore"],
           }),
         }
       }
@@ -925,6 +949,7 @@ export namespace LSPServer {
           return {
             process: spawn(candidate, args, {
               cwd: root,
+              stdio: ["pipe", "pipe", "ignore"],
             }),
           }
         }
@@ -1010,7 +1035,7 @@ export namespace LSPServer {
         if (!ok) return
       }
       if (tar) {
-        await $`tar -xf ${archive}`.cwd(Global.Path.bin).quiet().nothrow()
+        await run(["tar", "-xf", archive], { cwd: Global.Path.bin })
       }
       await fs.rm(archive, { force: true })
 
@@ -1021,7 +1046,7 @@ export namespace LSPServer {
       }
 
       if (platform !== "win32") {
-        await $`chmod +x ${bin}`.quiet().nothrow()
+        await fs.chmod(bin, 0o755).catch(() => {})
       }
 
       await fs.unlink(path.join(Global.Path.bin, "clangd")).catch(() => {})
@@ -1032,6 +1057,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, args, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1069,6 +1095,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -1082,7 +1109,7 @@ export namespace LSPServer {
     extensions: [".astro"],
     root: NearestRoot(["package-lock.json", "bun.lockb", "bun.lock", "pnpm-lock.yaml", "yarn.lock"]),
     async spawn(root) {
-      const tsserver = await Bun.resolve("typescript/lib/tsserver.js", Instance.directory).catch(() => {})
+      const tsserver = Module.resolve("typescript/lib/tsserver.js", Instance.directory)
       if (!tsserver) {
         log.info("typescript not found, required for Astro language server")
         return
@@ -1116,6 +1143,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -1130,7 +1158,30 @@ export namespace LSPServer {
 
   export const JDTLS: Info = {
     id: "jdtls",
-    root: NearestRoot(["pom.xml", "build.gradle", "build.gradle.kts", ".project", ".classpath"]),
+    root: async (file) => {
+      // Without exclusions, NearestRoot defaults to instance directory so we can't
+      // distinguish between a) no project found and b) project found at instance dir.
+      // So we can't choose the root from (potential) monorepo markers first.
+      // Look for potential subproject markers first while excluding potential monorepo markers.
+      const settingsMarkers = ["settings.gradle", "settings.gradle.kts"]
+      const gradleMarkers = ["gradlew", "gradlew.bat"]
+      const exclusionsForMonorepos = gradleMarkers.concat(settingsMarkers)
+
+      const [projectRoot, wrapperRoot, settingsRoot] = await Promise.all([
+        NearestRoot(
+          ["pom.xml", "build.gradle", "build.gradle.kts", ".project", ".classpath"],
+          exclusionsForMonorepos,
+        )(file),
+        NearestRoot(gradleMarkers, settingsMarkers)(file),
+        NearestRoot(settingsMarkers)(file),
+      ])
+
+      // If projectRoot is undefined we know we are in a monorepo or no project at all.
+      // So can safely fall through to the other roots
+      if (projectRoot) return projectRoot
+      if (wrapperRoot) return wrapperRoot
+      if (settingsRoot) return settingsRoot
+    },
     extensions: [".java"],
     async spawn(root) {
       const java = which("java")
@@ -1138,13 +1189,10 @@ export namespace LSPServer {
         log.error("Java 21 or newer is required to run the JDTLS. Please install it first.")
         return
       }
-      const javaMajorVersion = await $`java -version`
-        .quiet()
-        .nothrow()
-        .then(({ stderr }) => {
-          const m = /"(\d+)\.\d+\.\d+"/.exec(stderr.toString())
-          return !m ? undefined : parseInt(m[1])
-        })
+      const javaMajorVersion = await run(["java", "-version"]).then((result) => {
+        const m = /"(\d+)\.\d+\.\d+"/.exec(result.stderr.toString())
+        return !m ? undefined : parseInt(m[1])
+      })
       if (javaMajorVersion == null || javaMajorVersion < 21) {
         log.error("JDTLS requires at least Java 21.")
         return
@@ -1161,27 +1209,27 @@ export namespace LSPServer {
         const archiveName = "release.tar.gz"
 
         log.info("Downloading JDTLS archive", { url: releaseURL, dest: distPath })
-        const curlResult = await $`curl -L -o ${archiveName} '${releaseURL}'`.cwd(distPath).quiet().nothrow()
-        if (curlResult.exitCode !== 0) {
-          log.error("Failed to download JDTLS", { exitCode: curlResult.exitCode, stderr: curlResult.stderr.toString() })
+        const download = await fetch(releaseURL)
+        if (!download.ok || !download.body) {
+          log.error("Failed to download JDTLS", { status: download.status, statusText: download.statusText })
           return
         }
+        await Filesystem.writeStream(path.join(distPath, archiveName), download.body)
 
         log.info("Extracting JDTLS archive")
-        const tarResult = await $`tar -xzf ${archiveName}`.cwd(distPath).quiet().nothrow()
-        if (tarResult.exitCode !== 0) {
-          log.error("Failed to extract JDTLS", { exitCode: tarResult.exitCode, stderr: tarResult.stderr.toString() })
+        const tarResult = await run(["tar", "-xzf", archiveName], { cwd: distPath })
+        if (tarResult.code !== 0) {
+          log.error("Failed to extract JDTLS", { exitCode: tarResult.code, stderr: tarResult.stderr.toString() })
           return
         }
 
         await fs.rm(path.join(distPath, archiveName), { force: true })
         log.info("JDTLS download and extraction completed")
       }
-      const jarFileName = await $`ls org.eclipse.equinox.launcher_*.jar`
-        .cwd(launcherDir)
-        .quiet()
-        .nothrow()
-        .then(({ stdout }) => stdout.toString().trim())
+      const jarFileName =
+        (await fs.readdir(launcherDir).catch(() => []))
+          .find((item) => /^org\.eclipse\.equinox\.launcher_.*\.jar$/.test(item))
+          ?.trim() ?? ""
       const launcherJar = path.join(launcherDir, jarFileName)
       if (!(await pathExists(launcherJar))) {
         log.error(`Failed to locate the JDTLS launcher module in the installed directory: ${distPath}.`)
@@ -1223,6 +1271,7 @@ export namespace LSPServer {
           ],
           {
             cwd: root,
+            stdio: ["pipe", "pipe", "ignore"],
           },
         ),
       }
@@ -1294,7 +1343,15 @@ export namespace LSPServer {
 
         await fs.mkdir(distPath, { recursive: true })
         const archivePath = path.join(distPath, "kotlin-ls.zip")
-        await $`curl -L -o '${archivePath}' '${releaseURL}'`.quiet().nothrow()
+        const download = await fetch(releaseURL)
+        if (!download.ok || !download.body) {
+          log.error("Failed to download Kotlin Language Server", {
+            status: download.status,
+            statusText: download.statusText,
+          })
+          return
+        }
+        await Filesystem.writeStream(archivePath, download.body)
         const ok = await Archive.extractZip(archivePath, distPath)
           .then(() => true)
           .catch((error) => {
@@ -1304,7 +1361,7 @@ export namespace LSPServer {
         if (!ok) return
         await fs.rm(archivePath, { force: true })
         if (process.platform !== "win32") {
-          await $`chmod +x ${launcherScript}`.quiet().nothrow()
+          await fs.chmod(launcherScript, 0o755).catch(() => {})
         }
         log.info("Installed Kotlin Language Server", { path: launcherScript })
       }
@@ -1315,6 +1372,7 @@ export namespace LSPServer {
       return {
         process: spawn(launcherScript, ["--stdio"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1361,6 +1419,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -1468,10 +1527,9 @@ export namespace LSPServer {
             })
           if (!ok) return
         } else {
-          const ok = await $`tar -xzf ${tempPath} -C ${installDir}`
-            .quiet()
-            .then(() => true)
-            .catch((error) => {
+          const ok = await run(["tar", "-xzf", tempPath, "-C", installDir])
+            .then((result) => result.code === 0)
+            .catch((error: unknown) => {
               log.error("Failed to extract lua-language-server archive", { error })
               return false
             })
@@ -1489,11 +1547,15 @@ export namespace LSPServer {
         }
 
         if (platform !== "win32") {
-          const ok = await $`chmod +x ${bin}`.quiet().catch((error) => {
-            log.error("Failed to set executable permission for lua-language-server binary", {
-              error,
+          const ok = await fs
+            .chmod(bin, 0o755)
+            .then(() => true)
+            .catch((error: unknown) => {
+              log.error("Failed to set executable permission for lua-language-server binary", {
+                error,
+              })
+              return false
             })
-          })
           if (!ok) return
         }
 
@@ -1503,6 +1565,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1540,6 +1603,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -1565,6 +1629,7 @@ export namespace LSPServer {
       return {
         process: spawn(prisma, ["language-server"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1583,6 +1648,7 @@ export namespace LSPServer {
       return {
         process: spawn(dart, ["language-server", "--lsp"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1601,6 +1667,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1637,6 +1704,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -1707,7 +1775,7 @@ export namespace LSPServer {
         }
 
         if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
+          await fs.chmod(bin, 0o755).catch(() => {})
         }
 
         log.info(`installed terraform-ls`, { bin })
@@ -1716,6 +1784,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, ["serve"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
         initialization: {
           experimentalFeatures: {
@@ -1790,7 +1859,7 @@ export namespace LSPServer {
           if (!ok) return
         }
         if (ext === "tar.gz") {
-          await $`tar -xzf ${tempPath}`.cwd(Global.Path.bin).quiet().nothrow()
+          await run(["tar", "-xzf", tempPath], { cwd: Global.Path.bin })
         }
 
         await fs.rm(tempPath, { force: true })
@@ -1803,7 +1872,7 @@ export namespace LSPServer {
         }
 
         if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
+          await fs.chmod(bin, 0o755).catch(() => {})
         }
 
         log.info("installed texlab", { bin })
@@ -1812,6 +1881,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1849,6 +1919,7 @@ export namespace LSPServer {
           ...process.env,
           BUN_BE_BUN: "1",
         },
+        stdio: ["pipe", "pipe", "ignore"],
       })
       return {
         process: proc,
@@ -1869,6 +1940,7 @@ export namespace LSPServer {
       return {
         process: spawn(gleam, ["lsp"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1890,6 +1962,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, ["listen"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1921,6 +1994,7 @@ export namespace LSPServer {
           env: {
             ...process.env,
           },
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -1995,7 +2069,7 @@ export namespace LSPServer {
             })
           if (!ok) return
         } else {
-          await $`tar -xzf ${tempPath} --strip-components=1`.cwd(Global.Path.bin).quiet().nothrow()
+          await run(["tar", "-xzf", tempPath, "--strip-components=1"], { cwd: Global.Path.bin })
         }
 
         await fs.rm(tempPath, { force: true })
@@ -2008,14 +2082,14 @@ export namespace LSPServer {
         }
 
         if (platform !== "win32") {
-          await $`chmod +x ${bin}`.quiet().nothrow()
+          await fs.chmod(bin, 0o755).catch(() => {})
         }
 
         log.info("installed tinymist", { bin })
       }
 
       return {
-        process: spawn(bin, { cwd: root }),
+        process: spawn(bin, { cwd: root, stdio: ["pipe", "pipe", "ignore"] }),
       }
     },
   }
@@ -2033,6 +2107,7 @@ export namespace LSPServer {
       return {
         process: spawn(bin, ["--lsp"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },
@@ -2051,6 +2126,7 @@ export namespace LSPServer {
       return {
         process: spawn(julia, ["--startup-file=no", "--history-file=no", "-e", "using LanguageServer; runserver()"], {
           cwd: root,
+          stdio: ["pipe", "pipe", "ignore"],
         }),
       }
     },

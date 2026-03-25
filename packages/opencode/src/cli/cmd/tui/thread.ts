@@ -14,6 +14,7 @@ import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { TuiConfig } from "@/config/tui"
 import { Instance } from "@/project/instance"
+import { writeHeapSnapshot } from "v8"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -42,6 +43,9 @@ function createWorkerFetch(client: RpcClient): typeof fetch {
 function createEventSource(client: RpcClient): EventSource {
   return {
     on: (handler) => client.on<Event>("event", handler),
+    setWorkspace: (workspaceID) => {
+      void client.call("setWorkspace", { workspaceID })
+    },
   }
 }
 
@@ -198,6 +202,11 @@ export const TuiThreadCommand = cmd({
       try {
         await tui({
           url: transport.url,
+          async onSnapshot() {
+            const tui = writeHeapSnapshot("tui.heapsnapshot")
+            const server = await client.call("snapshot", undefined)
+            return [tui, server]
+          },
           config,
           directory: cwd,
           fetch: transport.fetch,
